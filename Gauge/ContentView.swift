@@ -55,7 +55,6 @@ struct ContentView: View {
     var totalVolume: Double { filteredLogs.reduce(0) { $0 + $1.fuelVolume } }
     var avgPricePerUnit: Double { totalVolume > 0 ? displaySpent / totalVolume : 0 }
     
-    // FIXED: Now uses the global UnitConverter to ensure math is identical to the benchmark engine
     var displayEfficiency: Double {
         var totalDistance: Double = 0
         let grouped = Dictionary(grouping: filteredLogs, by: { $0.vehicle?.id })
@@ -68,7 +67,6 @@ struct ContentView: View {
         
         guard totalDistance > 0, totalVolume > 0 else { return 0 }
         
-        // Base math in metric, then convert to user's setting
         let rawL100 = (totalVolume / totalDistance) * 100.0
         return UnitConverter.convertEfficiency(lPer100km: rawL100, to: settings.efficiencyFormat)
     }
@@ -76,7 +74,6 @@ struct ContentView: View {
     var efficiencyLabel: String { settings.efficiencyFormat }
     var unitLabel: String { settings.volumeUnit }
     
-    // FIXED: Global conversion helper for odometer/distance
     private func convertedDistance(_ distanceKm: Double) -> Double {
         let isMiles = settings.distanceUnit.lowercased().starts(with: "mi")
         return isMiles ? distanceKm * 0.621371 : distanceKm
@@ -84,7 +81,6 @@ struct ContentView: View {
     
     var body: some View {
         NavigationStack {
-            // FIXED: Removed the ZStack completely to eliminate the white bar bug.
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 20) {
                     headerRow
@@ -109,9 +105,8 @@ struct ContentView: View {
                         }
                     }
                 }
-                .padding(.bottom, 110) // Clearance for the global tab bar
+                .padding(.bottom, 110)
             }
-            // Background is now applied directly to the ScrollView
             .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
             .sheet(isPresented: $showAddLog) {
                 AddLogView()
@@ -244,32 +239,57 @@ struct ContentView: View {
             .padding(.bottom, 10)
             
             Chart {
-                let sortedLogs = filteredLogs.sorted { $0.date < $1.date }
+                let validLogs = filteredLogs.filter { distance(for: $0) > 0 }
                 
-                ForEach(Array(sortedLogs.enumerated()), id: \.element.id) { index, log in
+                ForEach(validLogs) { log in
                     let yValue: Double = {
                         if chartType == .price {
                             return log.fuelVolume > 0 ? (log.price / log.fuelVolume) : 0
                         } else {
-                            if index > 0 {
-                                let prevLog = sortedLogs[index - 1]
-                                let distanceDelta = log.odometer - prevLog.odometer
-                                
-                                // Base L/100km conversion for the chart points
-                                let rawL100 = (log.fuelVolume / distanceDelta) * 100.0
-                                return UnitConverter.convertEfficiency(lPer100km: rawL100, to: settings.efficiencyFormat)
-                            }
-                            return 0
+                            let dist = distance(for: log)
+                            let rawL100 = (log.fuelVolume / dist) * 100.0
+                            return UnitConverter.convertEfficiency(lPer100km: rawL100, to: settings.efficiencyFormat)
                         }
                     }()
                     
                     if yValue > 0 {
-                        LineMark(x: .value("Date", log.date), y: .value("Value", yValue))
-                            .interpolationMethod(.monotone)
-                            .foregroundStyle(.blue)
+                        if selectedVehicleId == "all" {
+                            let vName = log.vehicle?.makeModel ?? "Unknown"
+                            LineMark(x: .value("Date", log.date), y: .value("Value", yValue))
+                                .interpolationMethod(.monotone)
+                                .foregroundStyle(by: .value("Vehicle", vName))
+                            
+                            PointMark(x: .value("Date", log.date), y: .value("Value", yValue))
+                                .foregroundStyle(by: .value("Vehicle", vName))
+                        } else {
+                            LineMark(x: .value("Date", log.date), y: .value("Value", yValue))
+                                .interpolationMethod(.monotone)
+                                .foregroundStyle(.blue)
+                            
+                            PointMark(x: .value("Date", log.date), y: .value("Value", yValue))
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                }
+                
+                if chartType == .efficiency, selectedVehicleId != "all" {
+                    if let latestLog = validLogs.max(by: { $0.date < $1.date }) {
+                        let dist = distance(for: latestLog)
+                        let rawL100 = (latestLog.fuelVolume / dist) * 100.0
+                        let latestEff = UnitConverter.convertEfficiency(lPer100km: rawL100, to: settings.efficiencyFormat)
                         
-                        PointMark(x: .value("Date", log.date), y: .value("Value", yValue))
-                            .foregroundStyle(.blue)
+                        RuleMark(y: .value("Current", latestEff))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                            .foregroundStyle(.blue.opacity(0.5))
+                            .annotation(position: .overlay, alignment: .trailing) {
+                                Text(String(format: "%.1f", latestEff))
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundColor(.blue)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color(UIColor.systemBackground).opacity(0.8))
+                                    .cornerRadius(4)
+                            }
                     }
                 }
             }
@@ -359,13 +379,11 @@ struct ContentView: View {
     }
     
     private func logRow(for log: FuelLog) -> some View {
-        // Apply global mathematical conversion so the numbers change alongside the unit label
         let rawDist = distance(for: log)
         let displayDist = convertedDistance(rawDist)
         let displayOdo = convertedDistance(log.odometer)
         
         return VStack(alignment: .leading, spacing: 12) {
-            // Header Row: Pill Badge and Date
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: log.vehicle?.vehicleType == "truck" ? "truck.pickup.side.fill" : "car.fill")
@@ -386,13 +404,11 @@ struct ContentView: View {
             
             Divider()
             
-            // Details Row
             VStack(alignment: .leading, spacing: 4) {
                 Text("Cost: ").foregroundColor(.primary) + Text("$\(log.price, specifier: "%.2f")").foregroundColor(.primary)
                 Text("Fuel: ").foregroundColor(.primary) + Text("\(log.fuelVolume, specifier: "%.2f") \(unitLabel)").foregroundColor(.primary)
                 
                 HStack(spacing: 4) {
-                    // Precision clamped to 0 fractions to drop decimals completely
                     Text("Odo: \(displayOdo, format: .number.precision(.fractionLength(0)))").foregroundColor(.primary)
                     
                     if displayDist > 0 {
@@ -412,7 +428,6 @@ struct ContentView: View {
         .background(Color(UIColor.secondarySystemGroupedBackground))
         .cornerRadius(16)
         .padding(.horizontal)
-        // Kept Swipe actions active for future-proofing if you move this UI into a List
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) { modelContext.delete(log) } label: { Label("Delete", systemImage: "trash") }
             Button { logToEdit = log } label: { Label("Edit", systemImage: "pencil") }.tint(.blue)
