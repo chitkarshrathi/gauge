@@ -53,7 +53,10 @@ struct ContentView: View {
     
     var displaySpent: Double { filteredLogs.reduce(0) { $0 + $1.price } }
     var totalVolume: Double { filteredLogs.reduce(0) { $0 + $1.fuelVolume } }
-    var avgPricePerUnit: Double { totalVolume > 0 ? displaySpent / totalVolume : 0 }
+    var avgPricePerUnit: Double {
+            let convertedTotal = convertedVolume(totalVolume)
+            return convertedTotal > 0 ? displaySpent / convertedTotal : 0
+        }
     
     var displayEfficiency: Double {
         var totalDistance: Double = 0
@@ -78,6 +81,17 @@ struct ContentView: View {
         let isMiles = settings.distanceUnit.lowercased().starts(with: "mi")
         return isMiles ? distanceKm * 0.621371 : distanceKm
     }
+    
+    private func convertedVolume(_ volumeLiters: Double) -> Double {
+            let unit = settings.volumeUnit.lowercased()
+            if unit.contains("gal") {
+                if unit.contains("uk") || unit.contains("imperial") {
+                    return volumeLiters * 0.219969 // UK Imperial Gallons
+                }
+                return volumeLiters * 0.264172 // US Gallons
+            }
+            return volumeLiters // Default Liters
+        }
     
     var body: some View {
         NavigationStack {
@@ -244,6 +258,7 @@ struct ContentView: View {
                 ForEach(validLogs) { log in
                     let yValue: Double = {
                         if chartType == .price {
+                            let displayVol = convertedVolume(log.fuelVolume)
                             return log.fuelVolume > 0 ? (log.price / log.fuelVolume) : 0
                         } else {
                             let dist = distance(for: log)
@@ -382,6 +397,7 @@ struct ContentView: View {
         let rawDist = distance(for: log)
         let displayDist = convertedDistance(rawDist)
         let displayOdo = convertedDistance(log.odometer)
+        let displayVol = convertedVolume(log.fuelVolume)
         
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -406,7 +422,7 @@ struct ContentView: View {
             
             VStack(alignment: .leading, spacing: 4) {
                 Text("Cost: ").foregroundColor(.primary) + Text("$\(log.price, specifier: "%.2f")").foregroundColor(.primary)
-                Text("Fuel: ").foregroundColor(.primary) + Text("\(log.fuelVolume, specifier: "%.2f") \(unitLabel)").foregroundColor(.primary)
+                Text("Fuel: ").foregroundColor(.primary) + Text("\(displayVol, specifier: "%.2f") \(unitLabel)").foregroundColor(.primary)
                 
                 HStack(spacing: 4) {
                     Text("Odo: \(displayOdo, format: .number.precision(.fractionLength(0)))").foregroundColor(.primary)

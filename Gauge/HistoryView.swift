@@ -29,6 +29,17 @@ struct HistoryView: View {
         return isMiles ? distanceKm * 0.621371 : distanceKm
     }
     
+    private func convertedVolume(_ volumeLiters: Double) -> Double {
+            let unit = settings.volumeUnit.lowercased()
+            if unit.contains("gal") {
+                if unit.contains("uk") || unit.contains("imperial") {
+                    return volumeLiters * 0.219969 // UK Imperial Gallons
+                }
+                return volumeLiters * 0.264172 // US Gallons
+            }
+            return volumeLiters // Default Liters
+        }
+    
     // Calculates distance between the current log and the prior chronological log for the same vehicle
     private func distance(for log: FuelLog) -> Double {
         let vLogs = logs.filter { $0.vehicle?.id == log.vehicle?.id }.sorted { $0.odometer < $1.odometer }
@@ -109,6 +120,7 @@ struct HistoryView: View {
         let rawDist = distance(for: log)
         let displayDist = convertedDistance(rawDist)
         let displayOdo = convertedDistance(log.odometer)
+        let displayVol = convertedVolume(log.fuelVolume)
         
         return VStack(spacing: 0) {
             // Card Header
@@ -139,7 +151,7 @@ struct HistoryView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Cost: $\(log.price, specifier: "%.2f")")
                         .font(.subheadline.weight(.medium))
-                    Text("Fuel: \(log.fuelVolume, specifier: "%.2f") \(unitLabel)")
+                    Text("Fuel: \(displayVol, specifier: "%.2f") \(unitLabel)")
                         .font(.subheadline.weight(.medium))
                     
                     HStack(spacing: 4) {
