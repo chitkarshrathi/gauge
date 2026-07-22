@@ -55,6 +55,7 @@ struct ContentView: View {
     var totalVolume: Double { filteredLogs.reduce(0) { $0 + $1.fuelVolume } }
     var avgPricePerUnit: Double { totalVolume > 0 ? displaySpent / totalVolume : 0 }
     
+    // FIXED: Now uses the global UnitConverter to ensure math is identical to the benchmark engine
     var displayEfficiency: Double {
         var totalDistance: Double = 0
         let grouped = Dictionary(grouping: filteredLogs, by: { $0.vehicle?.id })
@@ -64,44 +65,54 @@ struct ContentView: View {
                 totalDistance += (last.odometer - first.odometer)
             }
         }
-        return totalVolume > 0 && totalDistance > 0 ? totalDistance / totalVolume : 0
+        
+        guard totalDistance > 0, totalVolume > 0 else { return 0 }
+        
+        // Base math in metric, then convert to user's setting
+        let rawL100 = (totalVolume / totalDistance) * 100.0
+        return UnitConverter.convertEfficiency(lPer100km: rawL100, to: settings.efficiencyFormat)
     }
     
     var efficiencyLabel: String { settings.efficiencyFormat }
     var unitLabel: String { settings.volumeUnit }
     
+    // FIXED: Global conversion helper for odometer/distance
+    private func convertedDistance(_ distanceKm: Double) -> Double {
+        let isMiles = settings.distanceUnit.lowercased().starts(with: "mi")
+        return isMiles ? distanceKm * 0.621371 : distanceKm
+    }
+    
     var body: some View {
         NavigationStack {
-            ZStack {
-                Color(UIColor.systemGroupedBackground).ignoresSafeArea()
-                
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 20) {
-                        headerRow
-                        filterTabs
-                        paginator
+            // FIXED: Removed the ZStack completely to eliminate the white bar bug.
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: 20) {
+                    headerRow
+                    filterTabs
+                    paginator
+                    
+                    if filteredLogs.isEmpty {
+                        emptyStateView
+                    } else {
+                        statsCard
+                        chartCard
+                        benchmarkCard
                         
-                        if filteredLogs.isEmpty {
-                            emptyStateView
-                        } else {
-                            statsCard
-                            chartCard
-                            benchmarkCard
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("Recent Fill-ups")
+                                .font(.title3.weight(.bold))
+                                .padding(.horizontal)
                             
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Recent Fill-ups")
-                                    .font(.title3.weight(.bold))
-                                    .padding(.horizontal)
-                                
-                                ForEach(recentLogs) { log in
-                                    logRow(for: log)
-                                }
+                            ForEach(recentLogs) { log in
+                                logRow(for: log)
                             }
                         }
                     }
-                    .padding(.bottom, 110) // Clearance for the global tab bar
                 }
+                .padding(.bottom, 110) // Clearance for the global tab bar
             }
+            // Background is now applied directly to the ScrollView
+            .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
             .sheet(isPresented: $showAddLog) {
                 AddLogView()
             }
@@ -117,7 +128,6 @@ struct ContentView: View {
     
     private var headerRow: some View {
         HStack {
-            // Garage Selector Menu
             Menu {
                 Button(action: { selectedVehicleId = "all" }) {
                     Label("All Vehicles", systemImage: selectedVehicleId == "all" ? "checkmark" : "")
@@ -146,7 +156,6 @@ struct ContentView: View {
             
             Spacer()
             
-            // PLUS BUTTON MOVED TO TOP RIGHT WITH LIQUID GLASS STYLE
             Button(action: { showAddLog = true }) {
                 Image(systemName: "plus")
                     .font(.system(size: 18, weight: .bold))
@@ -213,7 +222,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Total Spent: $\(displaySpent, specifier: "%.2f")")
             Text("Avg Price: $\(avgPricePerUnit, specifier: "%.2f")/\(unitLabel)")
-            Text("Avg Efficiency: \(displayEfficiency, specifier: "%.2f") \(efficiencyLabel)")
+            Text("Avg Efficiency: \(displayEfficiency, specifier: "%.1f") \(efficiencyLabel)")
             Text("Fill-ups: \(filteredLogs.count)")
         }
         .font(.subheadline)
@@ -245,7 +254,10 @@ struct ContentView: View {
                             if index > 0 {
                                 let prevLog = sortedLogs[index - 1]
                                 let distanceDelta = log.odometer - prevLog.odometer
-                                return (log.fuelVolume > 0 && distanceDelta > 0) ? (distanceDelta / log.fuelVolume) : 0
+                                
+                                // Base L/100km conversion for the chart points
+                                let rawL100 = (log.fuelVolume / distanceDelta) * 100.0
+                                return UnitConverter.convertEfficiency(lPer100km: rawL100, to: settings.efficiencyFormat)
                             }
                             return 0
                         }
@@ -260,21 +272,6 @@ struct ContentView: View {
                             .foregroundStyle(.blue)
                     }
                 }
-                
-                // NEW: Subtle Community Baseline
-                if chartType == .efficiency {
-                    let peerAvgRaw = BenchmarkService.communityAvgL100km
-                    let peerAvgConverted = UnitConverter.convertEfficiency(lPer100km: peerAvgRaw, to: settings.efficiencyFormat)
-                    
-                    RuleMark(y: .value("Peer Average", peerAvgConverted))
-                        .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 5]))
-                        .foregroundStyle(.gray.opacity(0.6))
-                        .annotation(position: .top, alignment: .leading) {
-                            Text("Fleet Avg")
-                                .font(.caption2.weight(.bold))
-                                .foregroundColor(.gray)
-                        }
-                }
             }
             .frame(height: 180)
         }
@@ -287,14 +284,14 @@ struct ContentView: View {
     private var benchmarkCard: some View {
         let comparison = BenchmarkService.compareEfficiency(logs: filteredLogs, currentFormat: settings.efficiencyFormat)
         
-        return NavigationLink(destination: CommunityInsightsView(logs: filteredLogs)) {
+        return NavigationLink(destination: CommunityInsightsView(allLogs: filteredLogs)) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Text("Community Benchmarks")
                         .font(.headline)
                         .foregroundColor(.primary)
                     Spacer()
-                    Text("Civic Hybrid Fleet")
+                    Text(selectedVehicleId == "all" ? "Entire Garage" : (activeVehicle?.makeModel ?? "Fleet"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Image(systemName: "chevron.right")
@@ -350,47 +347,76 @@ struct ContentView: View {
             .cornerRadius(12)
             .padding(.horizontal)
         }
-        .buttonStyle(PlainButtonStyle()) // Prevents the whole card from highlighting weirdly
+        .buttonStyle(PlainButtonStyle())
+    }
+    
+    private func distance(for log: FuelLog) -> Double {
+        let vLogs = logs.filter { $0.vehicle?.id == log.vehicle?.id }.sorted { $0.odometer < $1.odometer }
+        if let idx = vLogs.firstIndex(of: log), idx > 0 {
+            return log.odometer - vLogs[idx - 1].odometer
+        }
+        return 0
     }
     
     private func logRow(for log: FuelLog) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(log.date, style: .date)
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                Text("Odo: \(log.odometer, specifier: "%.0f") | Cost: $\(log.price, specifier: "%.2f")")
-                    .font(.subheadline)
+        // Apply global mathematical conversion so the numbers change alongside the unit label
+        let rawDist = distance(for: log)
+        let displayDist = convertedDistance(rawDist)
+        let displayOdo = convertedDistance(log.odometer)
+        
+        return VStack(alignment: .leading, spacing: 12) {
+            // Header Row: Pill Badge and Date
+            HStack {
+                HStack(spacing: 6) {
+                    Image(systemName: log.vehicle?.vehicleType == "truck" ? "truck.pickup.side.fill" : "car.fill")
+                    Text(log.vehicle?.makeModel ?? "Unknown")
+                        .font(.caption.weight(.bold))
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color(UIColor.tertiarySystemGroupedBackground))
+                .cornerRadius(8)
+                
+                Spacer()
+                
+                Text(log.date, format: .dateTime.month(.abbreviated).day().year())
+                    .font(.subheadline.weight(.semibold))
                     .foregroundColor(.secondary)
             }
-            Spacer()
             
-            HStack(spacing: 10) {
-                // EXPLICIT EDIT BUTTON
-                Button(action: { logToEdit = log }) {
-                    Image(systemName: "pencil")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(.blue)
-                        .frame(width: 36, height: 36)
-                        .background(Color.blue.opacity(0.1))
-                        .clipShape(Circle())
-                }
+            Divider()
+            
+            // Details Row
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Cost: ").foregroundColor(.primary) + Text("$\(log.price, specifier: "%.2f")").foregroundColor(.primary)
+                Text("Fuel: ").foregroundColor(.primary) + Text("\(log.fuelVolume, specifier: "%.2f") \(unitLabel)").foregroundColor(.primary)
                 
-                // ICON DELETE BUTTON
-                Button(role: .destructive, action: { modelContext.delete(log) }) {
-                    Image(systemName: "trash")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(.red)
-                        .frame(width: 36, height: 36)
-                        .background(Color.red.opacity(0.1))
-                        .clipShape(Circle())
+                HStack(spacing: 4) {
+                    // Precision clamped to 0 fractions to drop decimals completely
+                    Text("Odo: \(displayOdo, format: .number.precision(.fractionLength(0)))").foregroundColor(.primary)
+                    
+                    if displayDist > 0 {
+                        Text("(+\(Int(displayDist)) \(settings.distanceUnit))")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundColor(.green)
+                    } else {
+                        Text("(Initial Tank)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
+            .font(.subheadline)
         }
-        .padding()
+        .padding(16)
         .background(Color(UIColor.secondarySystemGroupedBackground))
-        .cornerRadius(12)
+        .cornerRadius(16)
         .padding(.horizontal)
+        // Kept Swipe actions active for future-proofing if you move this UI into a List
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive) { modelContext.delete(log) } label: { Label("Delete", systemImage: "trash") }
+            Button { logToEdit = log } label: { Label("Edit", systemImage: "pencil") }.tint(.blue)
+        }
     }
     
     private var emptyStateView: some View {

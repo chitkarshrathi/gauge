@@ -23,6 +23,21 @@ struct HistoryView: View {
         settings.volumeUnit
     }
     
+    // Global unit conversion helper for distance/odometer
+    private func convertedDistance(_ distanceKm: Double) -> Double {
+        let isMiles = settings.distanceUnit.lowercased().starts(with: "mi")
+        return isMiles ? distanceKm * 0.621371 : distanceKm
+    }
+    
+    // Calculates distance between the current log and the prior chronological log for the same vehicle
+    private func distance(for log: FuelLog) -> Double {
+        let vLogs = logs.filter { $0.vehicle?.id == log.vehicle?.id }.sorted { $0.odometer < $1.odometer }
+        if let idx = vLogs.firstIndex(of: log), idx > 0 {
+            return log.odometer - vLogs[idx - 1].odometer
+        }
+        return 0
+    }
+    
     var body: some View {
         ZStack {
             Color(UIColor.systemGroupedBackground).ignoresSafeArea()
@@ -34,8 +49,8 @@ struct HistoryView: View {
                     .padding(.top, 10)
                     .padding(.bottom, 20)
                     .sheet(item: $logToEdit) { log in
-                                EditLogView(log: log)
-                            }
+                        EditLogView(log: log)
+                    }
                 
                 // Vehicle Filter Pill-Bar
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -91,12 +106,15 @@ struct HistoryView: View {
     
     private func logCard(for log: FuelLog) -> some View {
         let carName = log.vehicle?.makeModel ?? "Unknown Vehicle"
+        let rawDist = distance(for: log)
+        let displayDist = convertedDistance(rawDist)
+        let displayOdo = convertedDistance(log.odometer)
         
         return VStack(spacing: 0) {
             // Card Header
             HStack {
                 HStack(spacing: 4) {
-                    Image(systemName: "car.fill")
+                    Image(systemName: log.vehicle?.vehicleType == "truck" ? "truck.pickup.side.fill" : "car.fill")
                         .font(.system(size: 12))
                     Text(carName)
                         .font(.caption.weight(.bold))
@@ -118,40 +136,53 @@ struct HistoryView: View {
             
             // Card Body
             HStack(alignment: .bottom) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Cost: $\(log.price, specifier: "%.2f")")
-                                    .font(.subheadline.weight(.medium))
-                                Text("Fuel: \(log.fuelVolume, specifier: "%.2f") \(unitLabel)")
-                                    .font(.subheadline.weight(.medium))
-                                Text("Odo: \(log.odometer, specifier: "%.0f")")
-                                    .font(.subheadline.weight(.medium))
-                            }
-                            
-                            Spacer()
-                            
-                            HStack(spacing: 12) {
-                                // EDIT BUTTON
-                                Button(action: { logToEdit = log }) {
-                                    Image(systemName: "pencil")
-                                        .font(.system(size: 18))
-                                        .foregroundColor(.blue)
-                                        .padding(10)
-                                        .background(Color.blue.opacity(0.1))
-                                        .cornerRadius(8)
-                                }
-                                
-                                // DELETE BUTTON
-                                Button(action: { modelContext.delete(log) }) {
-                                    Image(systemName: "trash")
-                                        .font(.system(size: 18))
-                                        .foregroundColor(.red)
-                                        .padding(10)
-                                        .background(Color.red.opacity(0.1))
-                                        .cornerRadius(8)
-                                }
-                            }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Cost: $\(log.price, specifier: "%.2f")")
+                        .font(.subheadline.weight(.medium))
+                    Text("Fuel: \(log.fuelVolume, specifier: "%.2f") \(unitLabel)")
+                        .font(.subheadline.weight(.medium))
+                    
+                    HStack(spacing: 4) {
+                        Text("Odo: \(displayOdo, format: .number.precision(.fractionLength(0)))")
+                            .font(.subheadline.weight(.medium))
+                        
+                        if displayDist > 0 {
+                            Text("(+\(Int(displayDist)) \(settings.distanceUnit))")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundColor(.green)
+                        } else {
+                            Text("(Initial)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
-                        .padding(.top, 10)
+                    }
+                }
+                
+                Spacer()
+                
+                HStack(spacing: 12) {
+                    // EDIT BUTTON
+                    Button(action: { logToEdit = log }) {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 18))
+                            .foregroundColor(.blue)
+                            .padding(10)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(8)
+                    }
+                    
+                    // DELETE BUTTON
+                    Button(action: { modelContext.delete(log) }) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 18))
+                            .foregroundColor(.red)
+                            .padding(10)
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(8)
+                    }
+                }
+            }
+            .padding(.top, 10)
         }
         .padding()
         .background(Color(UIColor.secondarySystemGroupedBackground))

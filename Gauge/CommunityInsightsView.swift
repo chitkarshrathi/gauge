@@ -1,27 +1,35 @@
-//
-//  CommunityInsightsView.swift
-//  Gauge
-//
-//  Created by Chitkarsh Rathi on 7/22/26.
-//
-
-
 import SwiftUI
 import SwiftData
-import Charts
 
 struct CommunityInsightsView: View {
     @Environment(SettingsManager.self) private var settings
-    var logs: [FuelLog]
+    var allLogs: [FuelLog]
+    @Query var vehicles: [Vehicle]
+    
+    @State private var localSelectedVehicleId: String = "all"
+    
+    var filteredLogs: [FuelLog] {
+        if localSelectedVehicleId == "all" { return allLogs }
+        return allLogs.filter { $0.vehicle?.id.uuidString == localSelectedVehicleId }
+    }
     
     var body: some View {
-        let comparison = BenchmarkService.compareEfficiency(logs: logs, currentFormat: settings.efficiencyFormat)
-        let isLowerBetter = UnitConverter.isLowerBetter(for: settings.efficiencyFormat)
+        let comparison = BenchmarkService.compareEfficiency(logs: filteredLogs, currentFormat: settings.efficiencyFormat)
         
         ScrollView {
             VStack(spacing: 24) {
+                // MARK: Vehicle Switcher
+                Picker("Vehicle", selection: $localSelectedVehicleId) {
+                    Text("Entire Garage").tag("all")
+                    ForEach(vehicles) { v in
+                        Text(v.makeModel).tag(v.id.uuidString)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.top, 10)
                 
-                // MARK: Hero Graphic
+                // MARK: Hero
                 VStack(spacing: 8) {
                     Image(systemName: comparison.isBetter ? "trophy.fill" : "gauge.with.dots.needle.bottom.50percent")
                         .font(.system(size: 50))
@@ -34,22 +42,16 @@ struct CommunityInsightsView: View {
                     
                     Text("\(comparison.topPercentageText) of Drivers")
                         .font(.system(size: 34, weight: .heavy, design: .rounded))
-                        .foregroundColor(.primary)
                     
-                    Text("Based on local telemetry for Honda Civic Hybrids")
+                    Text(localSelectedVehicleId == "all" ? "Based on your composite household footprint" : "Based on fleet telemetry for this model")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                .padding(.top, 20)
                 
-                // MARK: Fair Cost Comparison (Apple-like insight)
+                // MARK: Normalized Cost
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Normalized Spending")
                         .font(.title3.weight(.bold))
-                    
-                    Text("Total monthly fuel costs depend on how far you drive. To make a fair comparison, we look at what it costs you to drive 100 \(settings.distanceUnit)s compared to the community.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
                     
                     HStack(spacing: 20) {
                         costCard(title: "Your Cost", amount: comparison.userCostPer100, isHighlight: true)
@@ -60,55 +62,86 @@ struct CommunityInsightsView: View {
                     if savings > 0 {
                         HStack(spacing: 8) {
                             Image(systemName: "leaf.fill").foregroundColor(.green)
-                            Text("You save **$\(savings, specifier: "%.2f")** per 100 \(settings.distanceUnit)s compared to average.")
+                            Text("You save **$\(savings, specifier: "%.2f")** per 100 distance units.")
                                 .font(.subheadline)
                         }
-                        .padding(.top, 4)
+                    } else if savings < 0 {
+                        HStack(spacing: 8) {
+                            Image(systemName: "chart.line.down.forward.circle.fill").foregroundColor(.orange)
+                            Text("You are spending **$\(abs(savings), specifier: "%.2f")** more per 100 units than the fleet.")
+                                .font(.subheadline)
+                        }
                     }
                 }
                 .padding()
                 .background(Color(UIColor.secondarySystemGroupedBackground))
                 .cornerRadius(16)
+                .padding(.horizontal)
                 
-                // MARK: Contextual Insight (Differentiator)
+                // MARK: Eco-Coach (Actionable Tips)
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Why are you scoring here?")
+                    Text("Eco-Coach")
                         .font(.title3.weight(.bold))
                     
-                    HStack(alignment: .top) {
-                        Image(systemName: "lightbulb.fill")
-                            .foregroundColor(.yellow)
-                            .font(.title2)
-                        
-                        Text("Your hybrid engine excels in **stop-and-go city driving** due to regenerative braking. Our data shows 60% of your logs are tagged as 'City' or 'Commute', keeping your consumption significantly below the highway-heavy fleet average.")
-                            .font(.subheadline)
-                            .lineSpacing(4)
+                    let tips = BenchmarkService.getTips(isBetter: comparison.isBetter, logs: filteredLogs)
+                    ForEach(tips, id: \.self) { tip in
+                        HStack(alignment: .top) {
+                            Image(systemName: comparison.isBetter ? "star.fill" : "lightbulb.fill")
+                                .foregroundColor(comparison.isBetter ? .yellow : .orange)
+                            Text(tip)
+                                .font(.subheadline)
+                        }
+                        .padding(.vertical, 4)
                     }
                 }
                 .padding()
                 .background(Color(UIColor.secondarySystemGroupedBackground))
                 .cornerRadius(16)
+                .padding(.horizontal)
                 
+                // MARK: Gamification Trophies
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Achievements")
+                        .font(.title3.weight(.bold))
+                        .padding(.horizontal)
+                    
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 16) {
+                            ForEach(BenchmarkService.getTrophies(logs: filteredLogs)) { trophy in
+                                VStack(spacing: 8) {
+                                    Circle()
+                                        .fill(trophy.isEarned ? trophy.color.opacity(0.2) : Color.gray.opacity(0.1))
+                                        .frame(width: 60, height: 60)
+                                        .overlay(
+                                            Image(systemName: trophy.icon)
+                                                .font(.title2)
+                                                .foregroundColor(trophy.isEarned ? trophy.color : .gray.opacity(0.3))
+                                        )
+                                    Text(trophy.title)
+                                        .font(.caption.weight(.bold))
+                                        .foregroundColor(trophy.isEarned ? .primary : .secondary)
+                                }
+                                .frame(width: 90)
+                                .opacity(trophy.isEarned ? 1.0 : 0.5)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                }
+                .padding(.vertical, 10)
             }
-            .padding(.horizontal)
+            .padding(.vertical)
         }
         .background(Color(UIColor.systemGroupedBackground))
-        .navigationTitle("Community Insights")
+        .navigationTitle("Insights")
         .navigationBarTitleDisplayMode(.inline)
     }
     
     @ViewBuilder
     private func costCard(title: String, amount: Double, isHighlight: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.subheadline)
-                .foregroundColor(isHighlight ? .primary : .secondary)
-            Text("$\(amount, specifier: "%.2f")")
-                .font(.title2.weight(.bold))
-                .foregroundColor(isHighlight ? .blue : .primary)
-            Text("per 100 \(settings.distanceUnit)")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+            Text(title).font(.subheadline).foregroundColor(isHighlight ? .primary : .secondary)
+            Text("$\(amount, specifier: "%.2f")").font(.title2.weight(.bold)).foregroundColor(isHighlight ? .blue : .primary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
