@@ -3,7 +3,7 @@ import SwiftData
 import Charts
 
 enum ViewMode: String, CaseIterable {
-    case week = "Week", month = "Month", year = "Year", all = "All"
+    case recent = "Last 4", month = "Month", year = "Year", all = "All"
 }
 
 enum ChartType {
@@ -17,7 +17,7 @@ struct ContentView: View {
     @Query(sort: \Vehicle.makeModel) private var vehicles: [Vehicle]
     @Query(sort: \FuelLog.date, order: .reverse) private var logs: [FuelLog]
     
-    @State private var viewMode: ViewMode = .all
+    @State private var viewMode: ViewMode = .recent // Defaulting to the new Last 4 view
     @State private var refDate: Date = Date()
     @State private var chartType: ChartType = .efficiency
     @State private var selectedVehicleId: String = "all"
@@ -36,20 +36,22 @@ struct ContentView: View {
         }
         
         let calendar = Calendar.current
-        if viewMode != .all {
+        if viewMode == .recent {
+            // Simply take the last 4 logs for the selected vehicle(s)
+            result = Array(result.prefix(4))
+        } else if viewMode != .all {
             result = result.filter { log in
                 switch viewMode {
                 case .year: return calendar.isDate(log.date, equalTo: refDate, toGranularity: .year)
                 case .month: return calendar.isDate(log.date, equalTo: refDate, toGranularity: .month)
-                case .week: return calendar.isDate(log.date, equalTo: refDate, toGranularity: .weekOfYear)
-                case .all: return true
+                default: return true
                 }
             }
         }
         return result
     }
     
-    var recentLogs: [FuelLog] { Array(filteredLogs.prefix(5)) }
+    var recentLogs: [FuelLog] { Array(filteredLogs.prefix(4)) }
     
     var displaySpent: Double { filteredLogs.reduce(0) { $0 + $1.price } }
     var totalVolume: Double { filteredLogs.reduce(0) { $0 + $1.fuelVolume } }
@@ -208,9 +210,9 @@ struct ContentView: View {
             Button(action: { changePeriod(by: -1) }) {
                 Image(systemName: "chevron.left")
                     .font(.title3.weight(.bold))
-                    .foregroundColor(viewMode == .all ? .clear : .blue)
+                    .foregroundColor((viewMode == .all || viewMode == .recent) ? .clear : .blue)
             }
-            .disabled(viewMode == .all)
+            .disabled(viewMode == .all || viewMode == .recent)
             
             Spacer()
             Text(periodLabel)
@@ -220,9 +222,9 @@ struct ContentView: View {
             Button(action: { changePeriod(by: 1) }) {
                 Image(systemName: "chevron.right")
                     .font(.title3.weight(.bold))
-                    .foregroundColor((viewMode == .all || !canGoForward) ? .clear : .blue)
+                    .foregroundColor((viewMode == .all || viewMode == .recent || !canGoForward) ? .clear : .blue)
             }
-            .disabled(viewMode == .all || !canGoForward)
+            .disabled(viewMode == .all || viewMode == .recent || !canGoForward)
         }
         .padding(.horizontal, 24)
     }
@@ -464,16 +466,16 @@ struct ContentView: View {
     private func changePeriod(by value: Int) {
         let calendar = Calendar.current
         switch viewMode {
-        case .week: refDate = calendar.date(byAdding: .weekOfYear, value: value, to: refDate) ?? refDate
         case .month: refDate = calendar.date(byAdding: .month, value: value, to: refDate) ?? refDate
         case .year: refDate = calendar.date(byAdding: .year, value: value, to: refDate) ?? refDate
-        case .all: break
+        case .all, .recent: break
         }
     }
     
     private var periodLabel: String {
         let formatter = DateFormatter()
         switch viewMode {
+        case .recent: return "Recent (Last 4)"
         case .all: return "Lifetime Stats"
         case .year:
             formatter.dateFormat = "yyyy"
@@ -481,12 +483,6 @@ struct ContentView: View {
         case .month:
             formatter.dateFormat = "MMMM yyyy"
             return formatter.string(from: refDate)
-        case .week:
-            let calendar = Calendar.current
-            let start = calendar.dateInterval(of: .weekOfYear, for: refDate)?.start ?? refDate
-            let end = calendar.date(byAdding: .day, value: 6, to: start) ?? refDate
-            formatter.dateFormat = "M/d"
-            return "\(formatter.string(from: start)) - \(formatter.string(from: end))"
         }
     }
     
