@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UIKit
 
 struct AddLogView: View {
     @Environment(\.modelContext) private var modelContext
@@ -25,6 +26,7 @@ struct AddLogView: View {
     @State private var alertMessage = ""
     
     let contextOptions = ["city", "highway", "mountain", "mixed"]
+    let fuelOptions = ["Regular", "Midgrade", "Premium", "Diesel"]
     
     // Smart computed property to figure out what country we crossed into
     var detectedForeignCurrency: String? {
@@ -40,7 +42,8 @@ struct AddLogView: View {
     
     var body: some View {
         ZStack(alignment: .bottom) {
-            Color(UIColor.systemGroupedBackground).ignoresSafeArea()
+            // FIXED: Added uiColor parameter label
+            Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
             
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 20) {
@@ -81,7 +84,8 @@ struct AddLogView: View {
                             .pickerStyle(.menu)
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            // FIXED
+                            .background(Color(uiColor: .secondarySystemGroupedBackground))
                             .cornerRadius(12)
                         }
                     } else {
@@ -96,7 +100,8 @@ struct AddLogView: View {
                             .datePickerStyle(.compact)
                             .labelsHidden()
                             .padding(10)
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            // FIXED
+                            .background(Color(uiColor: .secondarySystemGroupedBackground))
                             .cornerRadius(12)
                     }
                     
@@ -105,7 +110,8 @@ struct AddLogView: View {
                         TextField("e.g. 45000", text: $odometerText)
                             .keyboardType(.decimalPad)
                             .padding()
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            // FIXED
+                            .background(Color(uiColor: .secondarySystemGroupedBackground))
                             .cornerRadius(12)
                     }
                     
@@ -114,18 +120,41 @@ struct AddLogView: View {
                         TextField("e.g. 40.5", text: $totalFuelText)
                             .keyboardType(.decimalPad)
                             .padding()
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            // FIXED
+                            .background(Color(uiColor: .secondarySystemGroupedBackground))
                             .cornerRadius(12)
                     }
                     
                     VStack(alignment: .leading, spacing: 6) {
-                        // Dynamically changes to USD or CAD
                         Text("Total Cost (\(activeCurrencyLabel))").font(.headline)
                         TextField("e.g. 55.00", text: $priceText)
                             .keyboardType(.decimalPad)
                             .padding()
-                            .background(Color(UIColor.secondarySystemGroupedBackground))
+                            // FIXED
+                            .background(Color(uiColor: .secondarySystemGroupedBackground))
                             .cornerRadius(12)
+                    }
+                    
+                    // ADDED: Missing UI for Fuel Type
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Fuel Type").font(.headline)
+                        Picker("Fuel Grade", selection: $fuelType) {
+                            ForEach(fuelOptions, id: \.self) { option in
+                                Text(option).tag(option)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    
+                    // ADDED: Missing UI for Driving Context
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Driving Context").font(.headline)
+                        Picker("Context", selection: $drivingContext) {
+                            ForEach(contextOptions, id: \.self) { option in
+                                Text(option.capitalized).tag(option)
+                            }
+                        }
+                        .pickerStyle(.segmented)
                     }
                     
                     Toggle(isOn: $isFullTank) {
@@ -160,8 +189,6 @@ struct AddLogView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 120)
             }
-            
-            // ... Bottom Dismiss Bar stays the same ...
         }
         .onAppear {
             if selectedVehicle == nil { selectedVehicle = vehicles.first }
@@ -216,12 +243,13 @@ struct AddLogView: View {
                 }
             }
             
+            // Note: Ensure your FuelLog model in Schema has been updated to accept these new parameters!
             let newLog = FuelLog(
                 odometer: odo,
                 fuelVolume: fuel,
-                price: finalBasePrice, // The converted CAD amount for charts
-                localCurrency: activeCurrencyLabel, // The exact USD receipt currency
-                localPrice: localPriceInput, // The exact USD receipt amount
+                price: finalBasePrice, // The converted amount for charts
+                localCurrency: activeCurrencyLabel, // The exact receipt currency
+                localPrice: localPriceInput, // The exact receipt amount
                 exchangeRate: finalExchangeRate,
                 fuelType: fuelType,
                 date: logDate,
