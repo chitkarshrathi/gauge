@@ -1,13 +1,13 @@
 import SwiftUI
 import SwiftData
-import UIKit
 
 struct AddLogView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Environment(SettingsManager.self) private var settings
     
-    @Query private var vehicles: [Vehicle]
+    @Query(sort: \Vehicle.makeModel) private var vehicles: [Vehicle]
+    @Query private var members: [FamilyMember]
     
     @State private var odometerText: String = ""
     @State private var totalFuelText: String = ""
@@ -17,8 +17,13 @@ struct AddLogView: View {
     @State private var drivingContext: String = "mixed"
     @State private var fuelType: String = "Regular"
     @State private var selectedVehicle: Vehicle?
+    @State private var selectedPayer: FamilyMember?
     
-    // NEW: Travel Engine States
+    // Always-Available Unit Overrides
+    @State private var localDistanceUnit: String = "km"
+    @State private var localVolumeUnit: String = "L"
+    
+    // Travel Engine (Now exclusively manages Currency)
     @State private var locationManager = LocationManager()
     @State private var isTravelMode = false
     @State private var isSaving = false
@@ -28,236 +33,295 @@ struct AddLogView: View {
     let contextOptions = ["city", "highway", "mountain", "mixed"]
     let fuelOptions = ["Regular", "Midgrade", "Premium", "Diesel"]
     
-    // Smart computed property to figure out what country we crossed into
     var detectedForeignCurrency: String? {
         if settings.baseCurrency == "CAD" && locationManager.currentCountryCode == "US" { return "USD" }
         if settings.baseCurrency == "USD" && locationManager.currentCountryCode == "CA" { return "CAD" }
         return nil
     }
     
-    // The active currency label for the UI
     var activeCurrencyLabel: String {
         isTravelMode ? (detectedForeignCurrency ?? settings.baseCurrency) : settings.baseCurrency
     }
     
+    var isCrossFill: Bool {
+        guard let vehicle = selectedVehicle else { return false }
+        return !vehicle.makeModel.contains("Chitkarsh")
+    }
+    
+    // Raw Base Odometer from the database
+    var previousBaseOdometer: Double? {
+        guard let vehicle = selectedVehicle else { return nil }
+        return vehicle.logs.filter { $0.date <= logDate }
+                           .sorted { $0.date > $1.date }
+                           .first?.odometer
+    }
+    
+    // Dynamically converts the validation hint if the user toggles the inline unit switch
+    var convertedPreviousOdometer: Double? {
+        guard let prev = previousBaseOdometer else { return nil }
+        let baseIsMi = settings.distanceUnit.lowercased().contains("mi")
+        let localIsMi = localDistanceUnit == "mi"
+        
+        if baseIsMi && !localIsMi { return prev * 1.60934 } // Base is Mi, UI is Km
+        if !baseIsMi && localIsMi { return prev * 0.621371 } // Base is Km, UI is Mi
+        return prev
+    }
+    
     var body: some View {
-        ZStack(alignment: .bottom) {
-            // FIXED: Added uiColor parameter label
-            Color(uiColor: .systemGroupedBackground).ignoresSafeArea()
-            
-            ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 20) {
-                    Text("New Log")
-                        .font(.system(size: 32, weight: .bold))
-                        .padding(.top, 10)
-                    
-                    // NEW: Smart Travel Banner
-                    if let foreignCurrency = detectedForeignCurrency {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
+        NavigationStack {
+            Form {
+                // Travel Mode is now strictly for Financials
+                if let foreignCurrency = detectedForeignCurrency {
+                    Section {
+                        Toggle(isOn: $isTravelMode) {
+                            VStack(alignment: .leading) {
                                 Text("Travel Detected")
-                                    .font(.subheadline.weight(.bold))
-                                Text("Log this fill-up in \(foreignCurrency)?")
+                                Text("Log transaction cost in \(foreignCurrency)?")
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
-                            Spacer()
-                            Toggle("", isOn: $isTravelMode)
-                                .labelsHidden()
-                                .tint(.blue)
                         }
-                        .padding(14)
-                        .background(Color.blue.opacity(isTravelMode ? 0.15 : 0.05))
-                        .cornerRadius(12)
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.blue.opacity(isTravelMode ? 0.3 : 0.1), lineWidth: 1))
-                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
+                }
+                
+                Section {
+                    Picker("Vehicle", selection: $selectedVehicle) {
+                        ForEach(vehicles) { vehicle in
+                            Text(vehicle.makeModel).tag(vehicle as Vehicle?)
+                        }
+                    }
+                }
+                
+                if isCrossFill {
+                    Section(header: Text("Cross-Vehicle Fill-Up"), footer: Text("You are logging a fill-up for someone else's vehicle.")) {
+                        Picker("Paid By", selection: $selectedPayer) {
+                            Text("Select Payer").tag(FamilyMember?.none)
+                            ForEach(members) { member in
+                                Text(member.name).tag(FamilyMember?.some(member))
+                            }
+                        }
+                        .foregroundColor(.blue)
+                    }
+                }
+                
+                Section(header: Text("Fill-Up Details")) {
+                    DatePicker("Date & Time", selection: $logDate)
                     
-                    if !vehicles.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Vehicle").font(.headline)
-                            Picker("Select Vehicle", selection: $selectedVehicle) {
-                                ForEach(vehicles) { vehicle in
-                                    Text(vehicle.makeModel).tag(vehicle as Vehicle?)
+                    // ODOMETER with inline unit switcher & dynamic validation
+                    HStack(alignment: .top) {
+                        Text("Odometer")
+                            .padding(.top, 8)
+                        Spacer()
+                        VStack(alignment: .trailing, spacing: 4) {
+                            HStack(spacing: 8) {
+                                TextField("e.g. 45000", text: $odometerText)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                
+                                Menu {
+                                    Button("km") { localDistanceUnit = "km" }
+                                    Button("mi") { localDistanceUnit = "mi" }
+                                } label: {
+                                    HStack(spacing: 2) {
+                                        Text(localDistanceUnit)
+                                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 10))
+                                    }
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundColor(.blue)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color(UIColor.tertiarySystemFill))
+                                    .cornerRadius(6)
                                 }
                             }
-                            .pickerStyle(.menu)
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            // FIXED
-                            .background(Color(uiColor: .secondarySystemGroupedBackground))
-                            .cornerRadius(12)
-                        }
-                    } else {
-                        Text("Please add a vehicle in the Garage first.")
-                            .foregroundColor(.red)
-                            .font(.subheadline)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Date & Time").font(.headline)
-                        DatePicker("", selection: $logDate, displayedComponents: [.date, .hourAndMinute])
-                            .datePickerStyle(.compact)
-                            .labelsHidden()
-                            .padding(10)
-                            // FIXED
-                            .background(Color(uiColor: .secondarySystemGroupedBackground))
-                            .cornerRadius(12)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Odometer (\(settings.distanceUnit))").font(.headline)
-                        TextField("e.g. 45000", text: $odometerText)
-                            .keyboardType(.decimalPad)
-                            .padding()
-                            // FIXED
-                            .background(Color(uiColor: .secondarySystemGroupedBackground))
-                            .cornerRadius(12)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Fuel Added (\(settings.volumeUnit))").font(.headline)
-                        TextField("e.g. 40.5", text: $totalFuelText)
-                            .keyboardType(.decimalPad)
-                            .padding()
-                            // FIXED
-                            .background(Color(uiColor: .secondarySystemGroupedBackground))
-                            .cornerRadius(12)
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Total Cost (\(activeCurrencyLabel))").font(.headline)
-                        TextField("e.g. 55.00", text: $priceText)
-                            .keyboardType(.decimalPad)
-                            .padding()
-                            // FIXED
-                            .background(Color(uiColor: .secondarySystemGroupedBackground))
-                            .cornerRadius(12)
-                    }
-                    
-                    // ADDED: Missing UI for Fuel Type
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Fuel Type").font(.headline)
-                        Picker("Fuel Grade", selection: $fuelType) {
-                            ForEach(fuelOptions, id: \.self) { option in
-                                Text(option).tag(option)
+                            
+                            if let prevOdoLocal = convertedPreviousOdometer {
+                                let enteredOdo = Double(odometerText) ?? 0
+                                let isInvalid = !odometerText.isEmpty && enteredOdo <= prevOdoLocal
+                                Text("Last: \(Int(prevOdoLocal)) \(localDistanceUnit)")
+                                    .font(.caption2)
+                                    .foregroundColor(isInvalid ? .red : .secondary)
+                                    .animation(.easeInOut, value: isInvalid)
                             }
                         }
-                        .pickerStyle(.segmented)
                     }
                     
-                    // ADDED: Missing UI for Driving Context
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Driving Context").font(.headline)
-                        Picker("Context", selection: $drivingContext) {
-                            ForEach(contextOptions, id: \.self) { option in
-                                Text(option.capitalized).tag(option)
+                    // FUEL ADDED with inline unit switcher
+                    HStack {
+                        Text("Fuel Added")
+                        Spacer()
+                        HStack(spacing: 8) {
+                            TextField("e.g. 40.5", text: $totalFuelText)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                            
+                            Menu {
+                                Button("L") { localVolumeUnit = "L" }
+                                Button("gal") { localVolumeUnit = "gal" }
+                            } label: {
+                                HStack(spacing: 2) {
+                                    Text(localVolumeUnit)
+                                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 10))
+                                }
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(.blue)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color(UIColor.tertiarySystemFill))
+                                .cornerRadius(6)
                             }
                         }
-                        .pickerStyle(.segmented)
                     }
                     
-                    Toggle(isOn: $isFullTank) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Filled to Full?").font(.headline)
-                            Text("Turn off for partial fills to keep efficiency math accurate.")
-                                .font(.caption).foregroundColor(.secondary)
+                    // TOTAL COST
+                    HStack {
+                        Text("Total Cost")
+                        Spacer()
+                        HStack(spacing: 8) {
+                            TextField("e.g. 55.00", text: $priceText)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                            
+                            Text(activeCurrencyLabel)
+                                .font(.subheadline.weight(.medium))
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color(UIColor.tertiarySystemFill))
+                                .cornerRadius(6)
                         }
                     }
-                    .padding(.vertical, 8)
-                    
-                    // Button dynamically shows loading state
-                    Button(action: saveLog) {
-                        ZStack {
-                            if isSaving {
-                                ProgressView().tint(.white)
-                            } else {
-                                Text("Save Log")
-                                    .font(.headline)
-                            }
-                        }
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color.blue)
-                        .cornerRadius(14)
-                        .shadow(color: Color.blue.opacity(0.3), radius: 6, x: 0, y: 4)
-                    }
-                    .disabled(isSaving)
-                    .padding(.top, 10)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 120)
+                
+                Section {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Fuel Grade")
+                        HStack(spacing: 8) {
+                            ForEach(fuelOptions, id: \.self) { option in
+                                Button(action: { fuelType = option }) {
+                                    Text(option)
+                                        .font(.subheadline.weight(.medium))
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 8)
+                                        .background(fuelType == option ? Color.blue : Color(uiColor: .tertiarySystemFill))
+                                        .foregroundColor(fuelType == option ? .white : .primary)
+                                        .cornerRadius(8)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    
+                    Picker("Driving Context", selection: $drivingContext) {
+                        ForEach(contextOptions, id: \.self) { Text($0.capitalized).tag($0) }
+                    }
+                    Toggle("Filled to Full?", isOn: $isFullTank)
+                } footer: {
+                    Text("Turn off 'Filled to Full' for partial fills to keep efficiency math accurate.")
+                }
             }
-        }
-        .onAppear {
-            if selectedVehicle == nil { selectedVehicle = vehicles.first }
-            // Boot up the GPS scanner silently in the background
-            locationManager.requestPermissionAndStart()
-        }
-        // Auto-suggest Travel Mode if we detect a border crossing
-        .onChange(of: detectedForeignCurrency) { _, newValue in
-            if newValue != nil {
-                withAnimation { isTravelMode = true }
+            .navigationTitle("New Log")
+            .navigationBarTitleDisplayMode(.inline)
+            .animation(.easeInOut, value: isCrossFill)
+            .onAppear {
+                if selectedVehicle == nil { selectedVehicle = vehicles.first }
+                if selectedPayer == nil { selectedPayer = members.first(where: { $0.name == "Chitkarsh" }) }
+                
+                // Inherit default units from settings to start
+                localDistanceUnit = settings.distanceUnit.lowercased().contains("mi") ? "mi" : "km"
+                localVolumeUnit = settings.volumeUnit.lowercased().contains("gal") ? "gal" : "L"
+                
+                locationManager.requestPermissionAndStart()
             }
-        }
-        .alert("Invalid Data", isPresented: $showAlert) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text(alertMessage)
+            .onChange(of: detectedForeignCurrency) { _, newValue in
+                if newValue != nil { withAnimation { isTravelMode = true } }
+            }
+            .alert("Invalid Data", isPresented: $showAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(alertMessage)
+            }
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { saveLog() }
+                        .disabled(isSaving || odometerText.isEmpty || totalFuelText.isEmpty || priceText.isEmpty)
+                }
+            }
         }
     }
     
+    // MARK: - Smart Failsafe & Base Normalization
     private func saveLog() {
-        guard let odo = Double(odometerText), let fuel = Double(totalFuelText),
+        guard let odoInput = Double(odometerText), let fuelInput = Double(totalFuelText),
               let localPriceInput = Double(priceText), let vehicle = selectedVehicle else {
             alertMessage = "Please fill in all fields with valid numbers."
             showAlert = true
             return
         }
         
-        let vehicleLogs = vehicle.logs.sorted { $0.date > $1.date }
-        if let latestLog = vehicleLogs.first, odo <= latestLog.odometer {
-            alertMessage = "Odometer reading must be higher than your last fill-up."
+        // Failsafe validation against the localized previous reading
+        if let prevOdoLocal = convertedPreviousOdometer, odoInput <= prevOdoLocal {
+            alertMessage = "Odometer reading (\(Int(odoInput))) must be higher than your previous fill-up (\(Int(prevOdoLocal)))."
             showAlert = true
             return
         }
         
         isSaving = true
         
-        // Asynchronous Network Task
         Task { @MainActor in
+            // 1. Normalize Distance to Base Unit
+            let baseIsMi = settings.distanceUnit.lowercased().contains("mi")
+            let localIsMi = localDistanceUnit == "mi"
+            var normalizedOdo = odoInput
+            
+            if baseIsMi && !localIsMi { normalizedOdo = odoInput * 0.621371 } // km to mi
+            else if !baseIsMi && localIsMi { normalizedOdo = odoInput * 1.60934 } // mi to km
+            
+            // Validate future logs against the normalized database value
+            let futureLogs = vehicle.logs.filter { $0.date > logDate }.sorted { $0.date < $1.date }
+            if let nextLog = futureLogs.first, normalizedOdo >= nextLog.odometer {
+                alertMessage = "Odometer reading cannot be higher than a future fill-up."
+                isSaving = false
+                showAlert = true
+                return
+            }
+            
+            // 2. Normalize Volume to Base Unit
+            let baseIsGal = settings.volumeUnit.lowercased().contains("gal")
+            let localIsGal = localVolumeUnit == "gal"
+            var normalizedFuel = fuelInput
+            
+            if baseIsGal && !localIsGal { normalizedFuel = fuelInput * 0.264172 } // L to gal
+            else if !baseIsGal && localIsGal { normalizedFuel = fuelInput * 3.78541 } // gal to L
+            
+            // 3. Normalize Currency to Base Unit
             var finalExchangeRate = 1.0
             var finalBasePrice = localPriceInput
             
-            // If they are logging in USD but their app base is CAD
             if isTravelMode, let target = detectedForeignCurrency {
                 do {
-                    // Instantly fetch the live conversion rate
                     finalExchangeRate = try await ExchangeRateService.fetchRate(from: target, to: settings.baseCurrency)
                     finalBasePrice = localPriceInput * finalExchangeRate
                 } catch {
-                    // Hackathon fallback if offline
                     finalExchangeRate = 1.0
                     finalBasePrice = localPriceInput
                 }
             }
             
-            // Note: Ensure your FuelLog model in Schema has been updated to accept these new parameters!
             let newLog = FuelLog(
-                odometer: odo,
-                fuelVolume: fuel,
-                price: finalBasePrice, // The converted amount for charts
-                localCurrency: activeCurrencyLabel, // The exact receipt currency
-                localPrice: localPriceInput, // The exact receipt amount
-                exchangeRate: finalExchangeRate,
-                fuelType: fuelType,
-                date: logDate,
-                isFullTank: isFullTank,
-                drivingContext: drivingContext
+                odometer: normalizedOdo, fuelVolume: normalizedFuel, price: finalBasePrice,
+                localCurrency: activeCurrencyLabel, localPrice: localPriceInput,
+                exchangeRate: finalExchangeRate, fuelType: fuelType, date: logDate,
+                isFullTank: isFullTank, drivingContext: drivingContext
             )
             
             newLog.vehicle = vehicle
+            newLog.payer = isCrossFill ? selectedPayer : members.first(where: { $0.name == "Chitkarsh" })
+            
             modelContext.insert(newLog)
             dismiss()
         }

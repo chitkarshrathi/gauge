@@ -13,10 +13,11 @@ enum ChartType {
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(SettingsManager.self) private var settings
-    @Environment(FamilyManager.self) private var familyManager // Injected Family Logic
+    @Environment(FamilyManager.self) private var familyManager
     
     @Query(sort: \Vehicle.makeModel) private var vehicles: [Vehicle]
     @Query(sort: \FuelLog.date, order: .reverse) private var logs: [FuelLog]
+    @Query private var households: [Household]
     
     @State private var viewMode: ViewMode = .recent
     @State private var refDate: Date = Date()
@@ -26,20 +27,27 @@ struct ContentView: View {
     
     @State private var showAddLog = false
     
-    // MARK: - Computed Properties (Untouched)
+    var currentHousehold: Household? { households.first }
+    
+    var effectiveVehicleId: String {
+        familyManager.isHouseholdModeActive ? "all" : selectedVehicleId
+    }
+    
     var activeVehicle: Vehicle? {
-        vehicles.first { $0.id.uuidString == selectedVehicleId }
+        vehicles.first { $0.id.uuidString == effectiveVehicleId }
     }
     
     var filteredLogs: [FuelLog] {
         var result = logs
-        if selectedVehicleId != "all" {
-            result = result.filter { $0.vehicle?.id.uuidString == selectedVehicleId }
+        
+        if effectiveVehicleId != "all" {
+            result = result.filter { $0.vehicle?.id.uuidString == effectiveVehicleId }
         }
         
         let calendar = Calendar.current
         if viewMode == .recent {
-            result = Array(result.prefix(4))
+            let grouped = Dictionary(grouping: result, by: { $0.vehicle?.id })
+            result = grouped.values.flatMap { $0.prefix(4) }.sorted { $0.date > $1.date }
         } else if viewMode != .all {
             result = result.filter { log in
                 switch viewMode {
@@ -52,7 +60,9 @@ struct ContentView: View {
         return result
     }
     
-    var recentLogs: [FuelLog] { Array(filteredLogs.prefix(4)) }
+    var recentLogs: [FuelLog] {
+        Array(filteredLogs.sorted { $0.date > $1.date }.prefix(4))
+    }
     
     var displaySpent: Double { filteredLogs.reduce(0) { $0 + $1.price } }
     var totalVolume: Double { filteredLogs.reduce(0) { $0 + $1.fuelVolume } }
@@ -70,9 +80,7 @@ struct ContentView: View {
                 totalDistance += (last.odometer - first.odometer)
             }
         }
-        
         guard totalDistance > 0, totalVolume > 0 else { return 0 }
-        
         let rawL100 = (totalVolume / totalDistance) * 100.0
         return UnitConverter.convertEfficiency(lPer100km: rawL100, to: settings.efficiencyFormat)
     }
@@ -88,36 +96,53 @@ struct ContentView: View {
     private func convertedVolume(_ volumeLiters: Double) -> Double {
         let unit = settings.volumeUnit.lowercased()
         if unit.contains("gal") {
-            if unit.contains("uk") || unit.contains("imperial") {
-                return volumeLiters * 0.219969 // UK Imperial Gallons
-            }
-            return volumeLiters * 0.264172 // US Gallons
+            if unit.contains("uk") || unit.contains("imperial") { return volumeLiters * 0.219969 }
+            return volumeLiters * 0.264172
         }
-        return volumeLiters // Default Liters
+        return volumeLiters
     }
     
-    // MARK: - Main Body
     var body: some View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 20) {
-                    
-                    // 1. The Apple-Style Mode Switcher
                     Picker("Dashboard Mode", selection: Bindable(familyManager).isHouseholdModeActive) {
-                        Text("Chitkarsh").tag(false)
+                        Text("Personal").tag(false)
                         Text("Household").tag(true)
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal)
                     .padding(.top, 10)
                     
-                    // 2. The Contextual Dashboards
                     if familyManager.isHouseholdModeActive {
-                        householdDashboard
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                        householdHeader
                     } else {
-                        personalDashboard
-                            .transition(.move(edge: .leading).combined(with: .opacity))
+                        personalHeader
+                    }
+                    
+                    if familyManager.isHouseholdModeActive, let household = currentHousehold, household.monthlyBudget > 0 {
+                        budgetCard(for: household)
+                    }
+                    
+                    filterTabs
+                    paginator
+                    
+                    if filteredLogs.isEmpty {
+                        emptyStateView
+                    } else {
+                        statsCard
+                        chartCard
+                        benchmarkCard
+                        
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text(familyManager.isHouseholdModeActive ? "Family Fill-ups" : "Recent Fill-ups")
+                                .font(.title3.weight(.bold))
+                                .padding(.horizontal)
+                            
+                            ForEach(recentLogs) { log in
+                                logRow(for: log)
+                            }
+                        }
                     }
                 }
                 .padding(.bottom, 110)
@@ -125,9 +150,7 @@ struct ContentView: View {
             .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: familyManager.isHouseholdModeActive)
             .sheet(isPresented: $showAddLog) {
-                // AddLogView will eventually take the family context too
-                // AddLogView()
-                Text("Add Log Sheet") // Placeholder until we update AddLogView
+                AddLogView()
             }
             .onAppear {
                 if selectedVehicleId == "all" && vehicles.count == 1 {
@@ -137,142 +160,25 @@ struct ContentView: View {
         }
     }
     
-    // MARK: - Dashboard Views
-    
-    private var personalDashboard: some View {
-        VStack(spacing: 20) {
-            headerRow
-            filterTabs
-            paginator
-            
-            if filteredLogs.isEmpty {
-                emptyStateView
-            } else {
-                statsCard
-                chartCard
-                benchmarkCard
-                
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Recent Fill-ups")
-                        .font(.title3.weight(.bold))
-                        .padding(.horizontal)
-                    
-                    ForEach(recentLogs) { log in
-                        logRow(for: log)
-                    }
-                }
-            }
-        }
-    }
-    
-    private var householdDashboard: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            // Household Header (Replaces personal headerRow)
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("The Rathi Garage")
-                        .font(.title2.weight(.bold))
-                    Text("4 Members Active")
+    // MARK: - Headers
+    private var householdHeader: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(currentHousehold?.name ?? "The Garage")
+                    .font(.title2.weight(.bold))
+                if let members = currentHousehold?.members.count {
+                    Text("\(members) Members Active")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
-                Spacer()
-                Button(action: { showAddLog = true }) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(.blue)
-                        .frame(width: 42, height: 42)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Circle())
-                        .overlay(Circle().stroke(Color.white.opacity(0.4), lineWidth: 1))
-                        .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 3)
-                }
             }
-            .padding(.horizontal)
-            
-            // Monthly Fuel Budget Card
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Household Fuel Budget")
-                    .font(.headline)
-                    .padding(.horizontal)
-                
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(alignment: .lastTextBaseline) {
-                        Text("$260.40") // Mock spend
-                            .font(.title.weight(.bold))
-                        Text("/ $400.00")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        Spacer()
-                        Text("65%")
-                            .font(.headline)
-                            .foregroundColor(.green)
-                    }
-                    
-                    GeometryReader { geometry in
-                        ZStack(alignment: .leading) {
-                            Capsule().frame(height: 12).foregroundColor(Color(UIColor.tertiarySystemGroupedBackground))
-                            Capsule().frame(width: geometry.size.width * 0.65, height: 12).foregroundColor(.green)
-                        }
-                    }
-                    .frame(height: 12)
-                }
-                .padding(16)
-                .background(Color(UIColor.secondarySystemGroupedBackground))
-                .cornerRadius(16)
-                .padding(.horizontal)
-            }
-            
-            // Shared Fleet
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Shared Fleet")
-                    .font(.headline)
-                    .padding(.horizontal)
-                
-                if vehicles.isEmpty {
-                    Text("No vehicles in garage yet.")
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal)
-                } else {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 16) {
-                            ForEach(vehicles) { vehicle in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack {
-                                        Image(systemName: vehicle.vehicleClass == "truck" ? "truck.pickup.side.fill" : "car.fill")
-                                            .foregroundColor(.blue)
-                                        Spacer()
-                                        Image(systemName: "person.circle.fill")
-                                            .foregroundColor(.gray)
-                                    }
-                                    
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(vehicle.makeModel)
-                                            .font(.subheadline.weight(.semibold))
-                                            .lineLimit(1)
-                                        Text(vehicle.licensePlate)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                .padding(12)
-                                .frame(width: 140, height: 100)
-                                .background(Color(UIColor.secondarySystemGroupedBackground))
-                                .cornerRadius(12)
-                                .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
-                }
-            }
+            Spacer()
+            addButton
         }
-        .padding(.top, 10)
+        .padding(.horizontal)
     }
     
-    // MARK: - Components (Untouched from your original file)
-    
-    private var headerRow: some View {
+    private var personalHeader: some View {
         HStack {
             Menu {
                 Button(action: { selectedVehicleId = "all" }) {
@@ -299,21 +205,69 @@ struct ContentView: View {
                 .clipShape(Capsule())
                 .shadow(color: .black.opacity(0.05), radius: 5, x: 0, y: 2)
             }
-            
             Spacer()
-            
-            Button(action: { showAddLog = true }) {
-                Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(.blue)
-                    .frame(width: 42, height: 42)
-                    .background(.ultraThinMaterial)
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(Color.white.opacity(0.4), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 3)
-            }
+            addButton
         }
         .padding(.horizontal)
+    }
+    
+    private var addButton: some View {
+        Button(action: { showAddLog = true }) {
+            Image(systemName: "plus")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(.blue)
+                .frame(width: 42, height: 42)
+                .background(.ultraThinMaterial)
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.4), lineWidth: 1))
+                .shadow(color: .black.opacity(0.1), radius: 6, x: 0, y: 3)
+        }
+    }
+    
+    private func budgetCard(for household: Household) -> some View {
+        let currentMonth = Calendar.current.component(.month, from: Date())
+        let currentYear = Calendar.current.component(.year, from: Date())
+        
+        let spentThisMonth = logs.filter {
+            Calendar.current.component(.month, from: $0.date) == currentMonth &&
+            Calendar.current.component(.year, from: $0.date) == currentYear
+        }.reduce(0) { $0 + $1.price }
+        
+        let percentage = min(spentThisMonth / household.monthlyBudget, 1.0)
+        let isOverBudget = spentThisMonth > household.monthlyBudget
+        
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Monthly Fuel Budget")
+                .font(.headline)
+                .padding(.horizontal)
+            
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .lastTextBaseline) {
+                    Text("$\(spentThisMonth, specifier: "%.2f")")
+                        .font(.title.weight(.bold))
+                        .foregroundColor(isOverBudget ? .red : .primary)
+                    Text("/ $\(household.monthlyBudget, specifier: "%.2f")")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("\(Int(percentage * 100))%")
+                        .font(.headline)
+                        .foregroundColor(isOverBudget ? .red : .green)
+                }
+                
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule().frame(height: 12).foregroundColor(Color(UIColor.tertiarySystemGroupedBackground))
+                        Capsule().frame(width: geometry.size.width * percentage, height: 12).foregroundColor(isOverBudget ? .red : .green)
+                    }
+                }
+                .frame(height: 12)
+            }
+            .padding(16)
+            .background(Color(UIColor.secondarySystemGroupedBackground))
+            .cornerRadius(16)
+            .padding(.horizontal)
+        }
     }
     
     private var filterTabs: some View {
@@ -349,8 +303,7 @@ struct ContentView: View {
             .disabled(viewMode == .all || viewMode == .recent)
             
             Spacer()
-            Text(periodLabel)
-                .font(.headline)
+            Text(periodLabel).font(.headline)
             Spacer()
             
             Button(action: { changePeriod(by: 1) }) {
@@ -388,62 +341,60 @@ struct ContentView: View {
             .pickerStyle(.segmented)
             .padding(.bottom, 10)
             
-            Chart {
-                let validLogs = filteredLogs.filter { distance(for: $0) > 0 }
-                
-                ForEach(validLogs) { log in
-                    let yValue: Double = {
-                        if chartType == .price {
-                            let displayVol = convertedVolume(log.fuelVolume)
-                            return log.fuelVolume > 0 ? (log.price / log.fuelVolume) : 0
-                        } else {
-                            let dist = distance(for: log)
-                            let rawL100 = (log.fuelVolume / dist) * 100.0
-                            return UnitConverter.convertEfficiency(lPer100km: rawL100, to: settings.efficiencyFormat)
-                        }
-                    }()
-                    
-                    if yValue > 0 {
-                        if selectedVehicleId == "all" {
-                            let vName = log.vehicle?.makeModel ?? "Unknown"
-                            LineMark(x: .value("Date", log.date), y: .value("Value", yValue))
-                                .interpolationMethod(.monotone)
-                                .foregroundStyle(by: .value("Vehicle", vName))
-                            
-                            PointMark(x: .value("Date", log.date), y: .value("Value", yValue))
-                                .foregroundStyle(by: .value("Vehicle", vName))
-                        } else {
-                            LineMark(x: .value("Date", log.date), y: .value("Value", yValue))
-                                .interpolationMethod(.monotone)
-                                .foregroundStyle(.blue)
-                            
-                            PointMark(x: .value("Date", log.date), y: .value("Value", yValue))
-                                .foregroundStyle(.blue)
-                        }
-                    }
+            let appleColors: [Color] = [.blue, .orange, .purple, .mint, .pink, .indigo, .green, .red]
+            let vehicleNames = vehicles.map { $0.makeModel }.sorted()
+            
+            let validLogs = filteredLogs.filter { distance(for: $0) > 0 }
+            let groupedLogs = Dictionary(grouping: validLogs, by: { $0.vehicle?.makeModel ?? "Unknown" })
+            
+            let chartDomain: ClosedRange<Date> = {
+                let cal = Calendar.current
+                let now = Date()
+                switch viewMode {
+                case .all:
+                    let earliest = logs.map { $0.date }.min() ?? now
+                    return earliest...now
+                case .year:
+                    let start = cal.date(from: cal.dateComponents([.year], from: refDate)) ?? now
+                    let end = cal.date(byAdding: DateComponents(year: 1, day: -1), to: start) ?? now
+                    return start...max(end, start.addingTimeInterval(86400))
+                case .month:
+                    let start = cal.date(from: cal.dateComponents([.year, .month], from: refDate)) ?? now
+                    let end = cal.date(byAdding: DateComponents(month: 1, day: -1), to: start) ?? now
+                    return start...max(end, start.addingTimeInterval(86400))
+                case .recent:
+                    let earliest = recentLogs.map { $0.date }.min() ?? cal.date(byAdding: .month, value: -1, to: now)!
+                    return earliest...now
                 }
-                
-                if chartType == .efficiency, selectedVehicleId != "all" {
-                    if let latestLog = validLogs.max(by: { $0.date < $1.date }) {
-                        let dist = distance(for: latestLog)
-                        let rawL100 = (latestLog.fuelVolume / dist) * 100.0
-                        let latestEff = UnitConverter.convertEfficiency(lPer100km: rawL100, to: settings.efficiencyFormat)
-                        
-                        RuleMark(y: .value("Current", latestEff))
-                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                            .foregroundStyle(.blue.opacity(0.5))
-                            .annotation(position: .overlay, alignment: .trailing) {
-                                Text(String(format: "%.1f", latestEff))
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundColor(.blue)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color(UIColor.systemBackground).opacity(0.8))
-                                    .cornerRadius(4)
+            }()
+            
+            Chart {
+                ForEach(Array(groupedLogs.keys.sorted()), id: \.self) { vName in
+                    let vLogs = groupedLogs[vName]!.sorted { $0.date < $1.date }
+                    
+                    ForEach(vLogs) { log in
+                        let yValue: Double = {
+                            if chartType == .price {
+                                let displayVol = convertedVolume(log.fuelVolume)
+                                return displayVol > 0 ? (log.price / displayVol) : 0
+                            } else {
+                                let dist = distance(for: log)
+                                let rawL100 = (log.fuelVolume / dist) * 100.0
+                                return UnitConverter.convertEfficiency(lPer100km: rawL100, to: settings.efficiencyFormat)
                             }
+                        }()
+                        
+                        if yValue > 0 {
+                            // Assign color globally so it never jumps around
+                            LineMark(x: .value("Date", log.date), y: .value("Value", yValue))
+                                .interpolationMethod(.monotone)
+                                .foregroundStyle(by: .value("Vehicle", vName))
+                        }
                     }
                 }
             }
+            .chartForegroundStyleScale(domain: vehicleNames, range: appleColors)
+            .chartXScale(domain: chartDomain)
             .frame(height: 180)
         }
         .padding()
@@ -453,15 +404,13 @@ struct ContentView: View {
     }
     
     private var benchmarkCard: some View {
-        // Mocking BenchmarkService since we don't have its definition here
-        // Replace with your actual implementation
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Community Benchmarks")
                     .font(.headline)
                     .foregroundColor(.primary)
                 Spacer()
-                Text(selectedVehicleId == "all" ? "Entire Garage" : (activeVehicle?.makeModel ?? "Fleet"))
+                Text(effectiveVehicleId == "all" ? "Entire Garage" : (activeVehicle?.makeModel ?? "Fleet"))
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Image(systemName: "chevron.right")
@@ -478,23 +427,19 @@ struct ContentView: View {
                         .font(.title2.weight(.bold))
                         .foregroundColor(.primary)
                 }
-                
                 Divider().frame(height: 30)
-                
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Peer Average")
                         .font(.caption)
                         .foregroundColor(.secondary)
-                    Text("8.4") // Mock
+                    Text("8.4")
                         .font(.title2.weight(.semibold))
                         .foregroundColor(.secondary)
                 }
-                
                 Text(settings.efficiencyFormat)
                     .font(.caption.weight(.bold))
                     .foregroundColor(.secondary)
                     .padding(.bottom, 2)
-                
                 Spacer()
             }
         }
@@ -546,7 +491,6 @@ struct ContentView: View {
                 
                 HStack(spacing: 4) {
                     Text("Odo: \(displayOdo, format: .number.precision(.fractionLength(0)))").foregroundColor(.primary)
-                    
                     if displayDist > 0 {
                         Text("(+\(Int(displayDist)) \(settings.distanceUnit))")
                             .font(.subheadline.weight(.bold))
@@ -559,6 +503,17 @@ struct ContentView: View {
                 }
             }
             .font(.subheadline)
+            
+            if familyManager.isHouseholdModeActive, let payer = log.payer {
+                HStack(spacing: 6) {
+                    Image(systemName: payer.avatarSymbol)
+                        .foregroundColor(.blue)
+                    Text("Paid by \(payer.name)")
+                        .font(.caption.weight(.medium))
+                }
+                .padding(.top, 4)
+                .foregroundColor(.secondary)
+            }
         }
         .padding(16)
         .background(Color(UIColor.secondarySystemGroupedBackground))
