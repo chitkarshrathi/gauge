@@ -52,19 +52,21 @@ struct GarageView: View {
     
     private func vehicleCard(for vehicle: Vehicle) -> some View {
         HStack(spacing: 16) {
-            // Simulated car color chip
-            Circle()
-                .fill(Color(hex: vehicle.colorHex) ?? .blue)
-                .frame(width: 40, height: 40)
-                .overlay(
-                    Image(systemName: vehicle.vehicleType == "electric" ? "bolt.car.fill" : "car.fill")
-                        .foregroundColor(.white)
-                )
+            // Vehicle Icon Container
+            ZStack {
+                Circle()
+                    .fill(Color.blue.opacity(0.15))
+                    .frame(width: 48, height: 48)
+                
+                Image(systemName: vehicle.vehicleClass == "truck" ? "truck.pickup.side.fill" : "car.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(.blue)
+            }
             
             VStack(alignment: .leading, spacing: 4) {
                 Text(vehicle.makeModel)
                     .font(.headline)
-                Text("\(vehicle.vehicleType.capitalized) Engine")
+                Text("\(vehicle.vehicleClass.capitalized) • \(vehicle.year) • \(vehicle.licensePlate)")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -86,14 +88,16 @@ struct GarageView: View {
     }
 }
 
-// Inline view to create a new vehicle
+// Inline view to create a new vehicle matching the scalable schema
 struct AddVehicleView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     
     @State private var makeModel: String = ""
-    @State private var vehicleType: String = "gas"
-    @State private var selectedColor: Color = .blue
+    @State private var vehicleClass: String = "sedan"
+    @State private var year: Int = 2024
+    @State private var licensePlate: String = ""
+    @State private var isAWD: Bool = false
     
     var body: some View {
         NavigationStack {
@@ -101,13 +105,22 @@ struct AddVehicleView: View {
                 Section(header: Text("Vehicle Details")) {
                     TextField("Make & Model (e.g. Honda Civic)", text: $makeModel)
                     
-                    Picker("Engine Type", selection: $vehicleType) {
-                        Text("Gasoline").tag("gas")
-                        Text("Diesel").tag("diesel")
-                        Text("Electric").tag("electric")
+                    Picker("Vehicle Class", selection: $vehicleClass) {
+                        Text("Sedan").tag("sedan")
+                        Text("SUV").tag("suv")
+                        Text("Truck").tag("truck")
+                        Text("Hybrid/EV").tag("hybrid")
                     }
                     
-                    ColorPicker("Vehicle Color", selection: $selectedColor)
+                    Picker("Model Year", selection: $year) {
+                        ForEach((2000...2026).reversed(), id: \.self) { yr in
+                            Text(String(yr)).tag(yr)
+                        }
+                    }
+                    
+                    TextField("License Plate", text: $licensePlate)
+                    
+                    Toggle("All-Wheel Drive (AWD)", isOn: $isAWD)
                 }
             }
             .navigationTitle("Add Vehicle")
@@ -120,37 +133,21 @@ struct AddVehicleView: View {
                     Button("Save") {
                         saveVehicle()
                     }
-                    .disabled(makeModel.isEmpty)
+                    .disabled(makeModel.isEmpty || licensePlate.isEmpty)
                 }
             }
         }
     }
     
     private func saveVehicle() {
-        // Convert SwiftUI Color to a Hex String to store in SwiftData
-        let uiColor = UIColor(selectedColor)
-        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
-        uiColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        let hexString = String(format: "#%02lX%02lX%02lX",
-                               lroundf(Float(red * 255)),
-                               lroundf(Float(green * 255)),
-                               lroundf(Float(blue * 255)))
-        
-        let newVehicle = Vehicle(makeModel: makeModel, colorHex: hexString, vehicleType: vehicleType)
+        let newVehicle = Vehicle(
+            makeModel: makeModel,
+            vehicleClass: vehicleClass,
+            year: year,
+            licensePlate: licensePlate,
+            isAWD: isAWD
+        )
         modelContext.insert(newVehicle)
         dismiss()
-    }
-}
-
-// Helper extension to convert hex strings back to SwiftUI Colors
-extension Color {
-    init?(hex: String) {
-        var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
-        var rgb: UInt64 = 0
-        guard Scanner(string: hexSanitized).scanHexInt64(&rgb) else { return nil }
-        self.init(red: Double((rgb & 0xFF0000) >> 16) / 255.0,
-                  green: Double((rgb & 0x00FF00) >> 8) / 255.0,
-                  blue: Double(rgb & 0x0000FF) / 255.0)
     }
 }

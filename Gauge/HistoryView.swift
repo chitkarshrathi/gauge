@@ -126,7 +126,7 @@ struct HistoryView: View {
             // Card Header
             HStack {
                 HStack(spacing: 4) {
-                    Image(systemName: log.vehicle?.vehicleType == "truck" ? "truck.pickup.side.fill" : "car.fill")
+                    Image(systemName: log.vehicle?.vehicleClass == "truck" ? "truck.pickup.side.fill" : "car.fill")
                         .font(.system(size: 12))
                     Text(carName)
                         .font(.caption.weight(.bold))

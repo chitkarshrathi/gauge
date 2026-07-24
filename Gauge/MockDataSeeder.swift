@@ -3,22 +3,56 @@ import SwiftData
 
 struct MockDataSeeder {
     static func seedIfNeeded(modelContext: ModelContext) {
-        let descriptor = FetchDescriptor<Vehicle>()
-        guard let existingVehicles = try? modelContext.fetch(descriptor), existingVehicles.isEmpty else { return }
+        // We now check for Households to determine if we need to seed
+        let descriptor = FetchDescriptor<Household>()
+        guard let existingHouseholds = try? modelContext.fetch(descriptor), existingHouseholds.isEmpty else { return }
         
-        print("🌱 Seeding multi-vehicle benchmarking garage...")
+        print("🌱 Seeding multi-user Rathi family garage...")
         
-        // 1. Create two vehicles
-        let hybridCar = Vehicle(makeModel: "2023 Honda Civic Hybrid", colorHex: "#007AFF", vehicleType: "hybrid")
-        let truck = Vehicle(makeModel: "2021 Ford F-150", colorHex: "#FF3B30", vehicleType: "gas")
+        // 1. Create the Household
+        let household = Household(name: "Rathi Family", subscriptionTier: "family_pro", monthlyBudget: 500.0)
+        modelContext.insert(household)
         
-        modelContext.insert(hybridCar)
-        modelContext.insert(truck)
+        // 2. Create Family Members
+        let chitkarsh = FamilyMember(name: "Chitkarsh", email: "chitkarsh@example.com", role: "admin", avatarSymbol: "person.crop.circle.fill")
+        let smriti = FamilyMember(name: "Smriti", email: "smriti@example.com", role: "member", avatarSymbol: "person.crop.square.fill")
+        let uncle = FamilyMember(name: "Uncle", email: "uncle@example.com", role: "member", avatarSymbol: "person.crop.artframe")
+        
+        // Link members to the household
+        chitkarsh.household = household
+        smriti.household = household
+        uncle.household = household
+        
+        modelContext.insert(chitkarsh)
+        modelContext.insert(smriti)
+        modelContext.insert(uncle)
         
         let calendar = Calendar.current
         let now = Date()
         
-        // 2. Honda Civic Logs (Intentionally slightly bad efficiency to trigger coaching)
+        // 3. Create Vehicles & Link to Household
+        let hybridCar = Vehicle(
+            makeModel: "2023 Honda Civic Hybrid",
+            vehicleClass: "sedan",
+            year: 2023,
+            licensePlate: "RATHI-1",
+            isAWD: false
+        )
+        let truck = Vehicle(
+            makeModel: "2021 Ford F-150",
+            vehicleClass: "truck",
+            year: 2021,
+            licensePlate: "RATHI-2",
+            isAWD: true
+        )
+        
+        hybridCar.household = household
+        truck.household = household
+        
+        modelContext.insert(hybridCar)
+        modelContext.insert(truck)
+        
+        // 4. Honda Civic Logs (Paid mostly by Chitkarsh)
         var civicOdo = 15000.0
         let civicFills = [
             (days: 90, vol: 40.0, price: 60.0), (days: 75, vol: 42.0, price: 64.0),
@@ -28,13 +62,19 @@ struct MockDataSeeder {
         ]
         
         for fill in civicFills {
-            civicOdo += Double.random(in: 500...600) // Lower distance per tank = worse L/100km
-            let log = FuelLog(odometer: civicOdo, fuelVolume: fill.vol, price: fill.price, localCurrency: "CAD", localPrice: fill.price, exchangeRate: 1.0, fuelType: "Regular", date: calendar.date(byAdding: .day, value: -fill.days, to: now) ?? now, isFullTank: true, drivingContext: "city")
+            civicOdo += Double.random(in: 500...600)
+            let log = FuelLog(
+                odometer: civicOdo, fuelVolume: fill.vol, price: fill.price,
+                localCurrency: "CAD", localPrice: fill.price, exchangeRate: 1.0,
+                fuelType: "Regular", date: calendar.date(byAdding: .day, value: -fill.days, to: now) ?? now,
+                isFullTank: true, drivingContext: "city"
+            )
             log.vehicle = hybridCar
+            log.payer = chitkarsh // Cross-linking the payer
             modelContext.insert(log)
         }
         
-        // 3. Ford F-150 Logs
+        // 5. Ford F-150 Logs (Paid mostly by Smriti)
         var truckOdo = 45000.0
         let truckFills = [
             (days: 80, vol: 90.0, price: 135.0), (days: 50, vol: 95.0, price: 142.0),
@@ -43,8 +83,14 @@ struct MockDataSeeder {
         
         for fill in truckFills {
             truckOdo += Double.random(in: 600...750)
-            let log = FuelLog(odometer: truckOdo, fuelVolume: fill.vol, price: fill.price, localCurrency: "CAD", localPrice: fill.price, exchangeRate: 1.0, fuelType: "Regular", date: calendar.date(byAdding: .day, value: -fill.days, to: now) ?? now, isFullTank: true, drivingContext: "towing")
+            let log = FuelLog(
+                odometer: truckOdo, fuelVolume: fill.vol, price: fill.price,
+                localCurrency: "CAD", localPrice: fill.price, exchangeRate: 1.0,
+                fuelType: "Regular", date: calendar.date(byAdding: .day, value: -fill.days, to: now) ?? now,
+                isFullTank: true, drivingContext: "towing"
+            )
             log.vehicle = truck
+            log.payer = smriti // Cross-linking the payer
             modelContext.insert(log)
         }
         
