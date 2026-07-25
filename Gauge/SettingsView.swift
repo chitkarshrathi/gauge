@@ -50,7 +50,7 @@ struct SettingsView: View {
                             .symbolRenderingMode(.multicolor)
                             .badge("Active")
                     }
-                    NavigationLink(destination: Text("Family Garage")) {
+                    NavigationLink(destination: FamilySettingsView()) {
                         Label("Family Garage", systemImage: "person.2.fill")
                             .foregroundColor(.blue)
                     }
