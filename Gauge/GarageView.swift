@@ -36,51 +36,22 @@ struct GarageView: View {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 24) {
                         
-                        // MARK: - 1. Top Header & Add Vehicle Button
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("My Garage")
-                                    .font(.system(size: 32, weight: .bold))
-                                Text("\(vehicles.count) \(vehicles.count == 1 ? "Vehicle" : "Vehicles") Tracked")
-                                    .font(.subheadline)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            
-                            Button(action: { showAddVehicle = true }) {
-                                Image(systemName: "plus.circle.fill")
-                                    .font(.system(size: 28))
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                        .padding(.horizontal)
-                        .padding(.top, 10)
+                        // MARK: - 1. Top Header & Add Vehicle
+                        headerRow
                         
-                        // MARK: - 2. Fleet Health Master Rings Header
                         if !vehicles.isEmpty {
+                            // MARK: - 2. Fleet Health Master Rings
                             fleetHealthHeader
+                            
+                            // MARK: - 3. Health Highlight Tiles
+                            healthHighlightsRow
                         }
                         
-                        // MARK: - 3. Quick Action Row
+                        // MARK: - 4. Quick Action Island
                         quickActionsRow
                         
-                        // MARK: - 4. Vehicle Cards List
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Fleet")
-                                .font(.title3.weight(.bold))
-                                .padding(.horizontal)
-                            
-                            if vehicles.isEmpty {
-                                emptyStateView
-                            } else {
-                                ForEach(vehicles) { vehicle in
-                                    Button(action: { selectedVehicleForDetail = vehicle }) {
-                                        vehicleCard(for: vehicle)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
+                        // MARK: - 5. Vehicle Cards List
+                        vehicleListSection
                     }
                     .padding(.bottom, 130)
                 }
@@ -100,38 +71,60 @@ struct GarageView: View {
         }
     }
     
-    // MARK: - Fleet Health Master Rings Header
+    // MARK: - UI Components
+    
+    private var headerRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("My Garage")
+                    .font(.system(size: 32, weight: .bold))
+                Text("\(vehicles.count) \(vehicles.count == 1 ? "Vehicle" : "Vehicles") Tracked")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            
+            Button(action: { showAddVehicle = true }) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 28))
+                    .foregroundColor(.blue)
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 10)
+    }
+    
     private var fleetHealthHeader: some View {
         VStack(spacing: 16) {
             HStack(spacing: 24) {
                 // Concentric Activity Rings
                 ZStack {
-                    // Outer Ring: Documents Compliance (Green)
+                    // Outer Ring: Documents Runway (Green)
                     Circle()
                         .stroke(Color.green.opacity(0.2), lineWidth: 10)
                         .frame(width: 90, height: 90)
                     Circle()
-                        .trim(from: 0.0, to: 0.90) // 90% compliant
+                        .trim(from: 0.0, to: 0.90) // Next expiry > 30 days
                         .stroke(Color.green, style: StrokeStyle(lineWidth: 10, lineCap: .round))
                         .frame(width: 90, height: 90)
                         .rotationEffect(.degrees(-90))
                     
-                    // Middle Ring: Budget Health (Blue)
+                    // Middle Ring: Fleet Efficiency/Eco Score (Teal)
                     Circle()
-                        .stroke(Color.blue.opacity(0.2), lineWidth: 10)
+                        .stroke(Color.teal.opacity(0.2), lineWidth: 10)
                         .frame(width: 66, height: 66)
                     Circle()
-                        .trim(from: 0.0, to: 0.75) // 75% budget remaining
-                        .stroke(Color.blue, style: StrokeStyle(lineWidth: 10, lineCap: .round))
+                        .trim(from: 0.0, to: 0.85) // Running 85% to baseline efficiency
+                        .stroke(Color.teal, style: StrokeStyle(lineWidth: 10, lineCap: .round))
                         .frame(width: 66, height: 66)
                         .rotationEffect(.degrees(-90))
                     
-                    // Inner Ring: Maintenance (Amber)
+                    // Inner Ring: Maintenance Runway (Orange)
                     Circle()
                         .stroke(Color.orange.opacity(0.2), lineWidth: 10)
                         .frame(width: 42, height: 42)
                     Circle()
-                        .trim(from: 0.0, to: 0.60) // Service due soon
+                        .trim(from: 0.0, to: 0.60) // Shortest service runway
                         .stroke(Color.orange, style: StrokeStyle(lineWidth: 10, lineCap: .round))
                         .frame(width: 42, height: 42)
                         .rotationEffect(.degrees(-90))
@@ -147,8 +140,8 @@ struct GarageView: View {
                             Text("Documents: ") + Text("Valid").bold()
                         }
                         HStack(spacing: 6) {
-                            Circle().fill(Color.blue).frame(width: 8, height: 8)
-                            Text("Fuel Budget: ") + Text("On Track").bold()
+                            Circle().fill(Color.teal).frame(width: 8, height: 8)
+                            Text("Efficiency: ") + Text("Optimal").bold()
                         }
                         HStack(spacing: 6) {
                             Circle().fill(Color.orange).frame(width: 8, height: 8)
@@ -168,7 +161,26 @@ struct GarageView: View {
         }
     }
     
-    // MARK: - Quick Action Island
+    private var healthHighlightsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                HighlightTileView(
+                    icon: "chart.line.uptrend.xyaxis", iconColor: .blue,
+                    title: "Avg. Cost / km", value: "$0.14"
+                )
+                HighlightTileView(
+                    icon: "dollarsign.circle.fill", iconColor: .green,
+                    title: "30-Day Fleet Spend", value: "$412.50"
+                )
+                HighlightTileView(
+                    icon: "exclamationmark.triangle.fill", iconColor: .orange,
+                    title: "Active Alerts", value: "1 Alert"
+                )
+            }
+            .padding(.horizontal)
+        }
+    }
+    
     private var quickActionsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 12) {
@@ -204,13 +216,32 @@ struct GarageView: View {
         }
     }
     
+    private var vehicleListSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Fleet")
+                .font(.title3.weight(.bold))
+                .padding(.horizontal)
+            
+            if vehicles.isEmpty {
+                emptyStateView
+            } else {
+                ForEach(vehicles) { vehicle in
+                    Button(action: { selectedVehicleForDetail = vehicle }) {
+                        vehicleCard(for: vehicle)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+    
     // MARK: - Vehicle Card Component
     private func vehicleCard(for vehicle: Vehicle) -> some View {
         let latestOdometer = vehicle.logs.map { $0.odometer }.max() ?? 0
         let displayOdo = latestOdometer > 0 ? "\(Int(latestOdometer)) km" : "No logs yet"
         
         return HStack(spacing: 16) {
-            // LEFT SIDE: Vehicle Identity & Status
+            // LEFT SIDE: Vehicle Identity & Stats
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(vehicle.makeModel)
@@ -221,6 +252,18 @@ struct GarageView: View {
                 Text("\(vehicle.year) • \(vehicle.licensePlate) • \(displayOdo)")
                     .font(.caption)
                     .foregroundColor(.secondary)
+                
+                // The "iPhone Storage" style multi-color expense bar
+                GeometryReader { geo in
+                    HStack(spacing: 2) {
+                        RoundedRectangle(cornerRadius: 2).fill(Color.blue).frame(width: geo.size.width * 0.5) // Fuel (50%)
+                        RoundedRectangle(cornerRadius: 2).fill(Color.orange).frame(width: geo.size.width * 0.3) // Maint (30%)
+                        RoundedRectangle(cornerRadius: 2).fill(Color.purple).frame(width: geo.size.width * 0.2) // Docs/Fixed (20%)
+                    }
+                }
+                .frame(height: 6)
+                .padding(.top, 4)
+                .padding(.bottom, 2)
                 
                 // Dynamic Health Status Badge
                 HStack(spacing: 4) {
@@ -251,7 +294,7 @@ struct GarageView: View {
                         .frame(width: 36, height: 36)
                         .rotationEffect(.degrees(-90))
                     
-                    // Maintenance Ring (Amber/Blue)
+                    // Maintenance Ring (Orange)
                     Circle()
                         .stroke(Color.orange.opacity(0.2), lineWidth: 4)
                         .frame(width: 26, height: 26)
@@ -264,7 +307,7 @@ struct GarageView: View {
                 
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.tertiary) // Fixed from earlier errors
             }
         }
         .padding(16)
@@ -273,7 +316,6 @@ struct GarageView: View {
         .padding(.horizontal)
     }
     
-    // MARK: - Empty State
     private var emptyStateView: some View {
         VStack(spacing: 12) {
             Image(systemName: "car.2.fill")
@@ -289,6 +331,36 @@ struct GarageView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 40)
+    }
+}
+
+// MARK: - Highlight Tile Sub-Component
+struct HighlightTileView: View {
+    let icon: String
+    let iconColor: Color
+    let title: String
+    let value: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundColor(iconColor)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(value)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+            }
+        }
+        .frame(width: 140, alignment: .leading)
+        .padding(14)
+        .background(Color(UIColor.secondarySystemGroupedBackground))
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.02), radius: 5, x: 0, y: 2)
     }
 }
 
@@ -402,6 +474,21 @@ struct VehicleDetailPlaceholderView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    Button(action: {}) {
+                        HStack {
+                            Image(systemName: "chart.bar.xaxis")
+                                .foregroundColor(.blue)
+                            Text("Financial Report")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundStyle(.tertiary)
+                                .font(.caption.bold())
+                        }
+                    }
+                }
+                
                 Section(header: Text("Glovebox Documents")) {
                     Label("Insurance Policy", systemImage: "doc.text.fill")
                     Label("Vehicle Registration", systemImage: "shield.fill")
@@ -421,7 +508,7 @@ struct VehicleDetailPlaceholderView: View {
     }
 }
 
-// Inline view to create a new vehicle matching the scalable schema
+// MARK: - Add Vehicle View
 struct AddVehicleView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
